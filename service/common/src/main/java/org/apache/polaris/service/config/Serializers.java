@@ -28,6 +28,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.util.Locale;
 import org.apache.polaris.core.admin.model.AddGrantRequest;
 import org.apache.polaris.core.admin.model.Catalog;
 import org.apache.polaris.core.admin.model.CatalogRole;
@@ -73,10 +74,21 @@ public final class Serializers {
         throws IOException, JacksonException {
       TreeNode treeNode = p.readValueAsTree();
       if (treeNode.isObject() && ((ObjectNode) treeNode).has("catalog")) {
+        JsonNode storageTypeNode = ((ObjectNode) treeNode).findValue("storageType");
+        if (storageTypeNode != null && storageTypeNode.isTextual()) {
+          String upperCaseValue = storageTypeNode.asText().toUpperCase(Locale.ROOT);
+          ((ObjectNode) treeNode.at("/catalog/storageConfigInfo"))
+              .put("storageType", upperCaseValue);
+        }
         return CreateCatalogRequest.builder()
             .setCatalog(ctxt.readTreeAsValue((JsonNode) treeNode.get("catalog"), Catalog.class))
             .build();
       } else {
+        JsonNode storageTypeNode = ((ObjectNode) treeNode).findValue("storageType");
+        if (storageTypeNode != null && storageTypeNode.isTextual()) {
+          String upperCaseValue = storageTypeNode.asText().toUpperCase(Locale.ROOT);
+          ((ObjectNode) treeNode.at("/storageConfigInfo")).put("storageType", upperCaseValue);
+        }
         return CreateCatalogRequest.builder()
             .setCatalog(ctxt.readTreeAsValue((JsonNode) treeNode, Catalog.class))
             .build();
