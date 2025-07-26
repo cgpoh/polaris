@@ -18,7 +18,9 @@
 # under the License.
 #
 
-set -e 
+set -e
+
+[[ -z ${DOCKER} ]] && DOCKER="$(which podman > /dev/null && echo podman || echo docker)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pushd "$SCRIPT_DIR/../python" > /dev/null
@@ -62,7 +64,7 @@ echo "Regenerating python from the spec"
 
 OPEN_API_CLI_VERSION="v7.11.0"
 
-docker run --rm \
+${DOCKER} run --rm \
   -v "${SCRIPT_DIR}/../..:/local" \
   openapitools/openapi-generator-cli:${OPEN_API_CLI_VERSION} generate \
   -i /local/spec/polaris-management-service.yml \
@@ -73,7 +75,7 @@ docker run --rm \
   --additional-properties=pythonVersion=3.9 \
   --ignore-file-override /local/client/python/.openapi-generator-ignore > /dev/null
 
-docker run --rm \
+${DOCKER} run --rm \
   -v "${SCRIPT_DIR}/../..:/local" \
   openapitools/openapi-generator-cli:${OPEN_API_CLI_VERSION} generate \
   -i /local/spec/polaris-catalog-service.yaml \
@@ -85,7 +87,7 @@ docker run --rm \
   --additional-properties=pythonVersion=3.9 \
   --ignore-file-override /local/client/python/.openapi-generator-ignore > /dev/null
 
-docker run --rm \
+${DOCKER} run --rm \
   -v "${SCRIPT_DIR}/../..:/local" \
   openapitools/openapi-generator-cli:${OPEN_API_CLI_VERSION} generate \
   -i /local/spec/iceberg-rest-catalog-open-api.yaml \
@@ -139,6 +141,7 @@ EXCLUDE_PATHS=(
   "./poetry.lock"
   "./docker-compose.yml"
   "./.pre-commit-config.yaml"
+  "./README.md"
 )
 
 EXCLUDE_EXTENSIONS=(
@@ -161,7 +164,7 @@ find . -type f | while read -r file; do
         extension_excluded=true
       fi
     done
-    
+
     # Skip this file if its extension is excluded
     if [ "$extension_excluded" = true ]; then
       echo "${file}: skipped"
@@ -182,7 +185,7 @@ find . -type f | while read -r file; do
       if [ "$exclude" = false ]; then
         # Construct the header file path
         header_file="${SCRIPT_DIR}/header-${ext}.txt"
-      
+
         # Only process if the license file exists
         if [ -f "$header_file" ]; then
           echo "${file}: updated"
@@ -212,4 +215,3 @@ echo "Deletion complete"
 echo "Regeneration complete"
 
 popd > /dev/null
-

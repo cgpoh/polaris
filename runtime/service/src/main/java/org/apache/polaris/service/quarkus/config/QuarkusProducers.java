@@ -18,6 +18,7 @@
  */
 package org.apache.polaris.service.quarkus.config;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import io.smallrye.common.annotation.Identifier;
 import io.smallrye.context.SmallRyeManagedExecutor;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -40,6 +41,7 @@ import org.apache.polaris.core.auth.AuthenticatedPolarisPrincipal;
 import org.apache.polaris.core.auth.PolarisAuthorizer;
 import org.apache.polaris.core.auth.PolarisAuthorizerImpl;
 import org.apache.polaris.core.config.PolarisConfigurationStore;
+import org.apache.polaris.core.config.RealmConfig;
 import org.apache.polaris.core.context.CallContext;
 import org.apache.polaris.core.context.RealmContext;
 import org.apache.polaris.core.persistence.BasePersistence;
@@ -47,9 +49,13 @@ import org.apache.polaris.core.persistence.MetaStoreManagerFactory;
 import org.apache.polaris.core.persistence.PolarisEntityManager;
 import org.apache.polaris.core.persistence.PolarisMetaStoreManager;
 import org.apache.polaris.core.persistence.bootstrap.RootCredentialsSet;
+import org.apache.polaris.core.persistence.cache.EntityCache;
+import org.apache.polaris.core.persistence.resolver.Resolver;
+import org.apache.polaris.core.persistence.resolver.ResolverFactory;
 import org.apache.polaris.core.secrets.UserSecretsManager;
 import org.apache.polaris.core.secrets.UserSecretsManagerFactory;
 import org.apache.polaris.core.storage.cache.StorageCredentialCache;
+import org.apache.polaris.core.storage.cache.StorageCredentialCacheConfig;
 import org.apache.polaris.service.auth.ActiveRolesProvider;
 import org.apache.polaris.service.auth.AuthenticationType;
 import org.apache.polaris.service.auth.Authenticator;
@@ -75,12 +81,15 @@ import org.apache.polaris.service.quarkus.ratelimiter.QuarkusTokenBucketConfigur
 import org.apache.polaris.service.quarkus.secrets.QuarkusSecretsManagerConfiguration;
 import org.apache.polaris.service.ratelimiter.RateLimiter;
 import org.apache.polaris.service.ratelimiter.TokenBucketFactory;
+import org.apache.polaris.service.storage.aws.S3AccessConfig;
+import org.apache.polaris.service.storage.aws.StsClientsPool;
 import org.apache.polaris.service.task.TaskHandlerConfiguration;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.context.ManagedExecutor;
 import org.eclipse.microprofile.context.ThreadContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.http.SdkHttpClient;
+import software.amazon.awssdk.http.apache.ApacheHttpClient;
 
 public class QuarkusProducers {
   private static final Logger LOGGER = LoggerFactory.getLogger(QuarkusProducers.class);
@@ -96,14 +105,32 @@ public class QuarkusProducers {
   @Produces
   @ApplicationScoped
   public StorageCredentialCache storageCredentialCache(
-      RealmContext realmContext, PolarisConfigurationStore configurationStore) {
-    return new StorageCredentialCache(realmContext, configurationStore);
+      StorageCredentialCacheConfig storageCredentialCacheConfig) {
+    return new StorageCredentialCache(storageCredentialCacheConfig);
   }
 
   @Produces
   @ApplicationScoped
-  public PolarisAuthorizer polarisAuthorizer(PolarisConfigurationStore configurationStore) {
-    return new PolarisAuthorizerImpl(configurationStore);
+  public ResolverFactory resolverFactory(
+      MetaStoreManagerFactory metaStoreManagerFactory,
+      PolarisMetaStoreManager polarisMetaStoreManager) {
+    return (callContext, securityContext, referenceCatalogName) -> {
+      EntityCache entityCache =
+          metaStoreManagerFactory.getOrCreateEntityCache(
+              callContext.getRealmContext(), callContext.getRealmConfig());
+      return new Resolver(
+          callContext.getPolarisCallContext(),
+          polarisMetaStoreManager,
+          securityContext,
+          entityCache,
+          referenceCatalogName);
+    };
+  }
+
+  @Produces
+  @ApplicationScoped
+  public PolarisAuthorizer polarisAuthorizer() {
+    return new PolarisAuthorizerImpl();
   }
 
   @Produces
@@ -128,10 +155,15 @@ public class QuarkusProducers {
       PolarisConfigurationStore configurationStore,
       MetaStoreManagerFactory metaStoreManagerFactory,
       Clock clock) {
-    BasePersistence metaStoreSession =
-        metaStoreManagerFactory.getOrCreateSessionSupplier(realmContext).get();
+    BasePersistence metaStoreSession = metaStoreManagerFactory.getOrCreateSession(realmContext);
     return new PolarisCallContext(
         realmContext, metaStoreSession, diagServices, configurationStore, clock);
+  }
+
+  @Produces
+  @RequestScoped
+  public RealmConfig realmContext(CallContext callContext) {
+    return callContext.getRealmConfig();
   }
 
   // Polaris service beans - selected from @Identifier-annotated beans
@@ -168,6 +200,35 @@ public class QuarkusProducers {
       QuarkusSecretsManagerConfiguration config,
       @Any Instance<UserSecretsManagerFactory> userSecretsManagerFactories) {
     return userSecretsManagerFactories.select(Identifier.Literal.of(config.type())).get();
+  }
+
+  @Produces
+  @Singleton
+  @Identifier("aws-sdk-http-client")
+  public SdkHttpClient sdkHttpClient(S3AccessConfig config) {
+    ApacheHttpClient.Builder httpClient = ApacheHttpClient.builder();
+    config.maxHttpConnections().ifPresent(httpClient::maxConnections);
+    config.readTimeout().ifPresent(httpClient::socketTimeout);
+    config.connectTimeout().ifPresent(httpClient::connectionTimeout);
+    config.connectionAcquisitionTimeout().ifPresent(httpClient::connectionAcquisitionTimeout);
+    config.connectionMaxIdleTime().ifPresent(httpClient::connectionMaxIdleTime);
+    config.connectionTimeToLive().ifPresent(httpClient::connectionTimeToLive);
+    config.expectContinueEnabled().ifPresent(httpClient::expectContinueEnabled);
+    return httpClient.build();
+  }
+
+  public void closeSdkHttpClient(
+      @Disposes @Identifier("aws-sdk-http-client") SdkHttpClient client) {
+    client.close();
+  }
+
+  @Produces
+  @ApplicationScoped
+  public StsClientsPool stsClientsPool(
+      @Identifier("aws-sdk-http-client") SdkHttpClient httpClient,
+      S3AccessConfig config,
+      MeterRegistry meterRegistry) {
+    return new StsClientsPool(config.effectiveClientsCacheMaxSize(), httpClient, meterRegistry);
   }
 
   /**
@@ -322,7 +383,7 @@ public class QuarkusProducers {
   @RequestScoped
   public BasePersistence polarisMetaStoreSession(
       RealmContext realmContext, MetaStoreManagerFactory metaStoreManagerFactory) {
-    return metaStoreManagerFactory.getOrCreateSessionSupplier(realmContext).get();
+    return metaStoreManagerFactory.getOrCreateSession(realmContext);
   }
 
   @Produces
@@ -341,9 +402,11 @@ public class QuarkusProducers {
 
   @Produces
   public ActiveRolesProvider activeRolesProvider(
-      @ConfigProperty(name = "polaris.active-roles-provider.type") String activeRolesProviderType,
+      QuarkusAuthenticationRealmConfiguration config,
       @Any Instance<ActiveRolesProvider> activeRolesProviders) {
-    return activeRolesProviders.select(Identifier.Literal.of(activeRolesProviderType)).get();
+    return activeRolesProviders
+        .select(Identifier.Literal.of(config.activeRolesProvider().type()))
+        .get();
   }
 
   @Produces

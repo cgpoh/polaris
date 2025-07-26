@@ -185,11 +185,11 @@ Now, we can stage the artifacts to dist dev repository:
 ```
 svn co https://dist.apache.org/repos/dist/dev/incubator/polaris polaris-dist-dev
 cd polaris-dist-dev
-mkdir apache-polaris-x.y.z
-cp /path/to/polaris/github/clone/repo/build/distribution/* apache-polaris-x.y.z
-cp /path/to/polaris/github/clone/repo/runtime/distribution/build/distributions/* apache-polaris-x.y.z
+mkdir x.y.z
+cp /path/to/polaris/github/clone/repo/build/distribution/* x.y.z
+cp /path/to/polaris/github/clone/repo/runtime/distribution/build/distributions/* x.y.z
 cp -r /path/to/polaris/github/clone/repo/helm/polaris helm-chart/x.y.z 
-svn add apache-polaris-x.y.z
+svn add x.y.z
 svn add helm-chart/x.y.z
 svn commit -m"Stage Apache Polaris x.y.z RCx"
 ```
@@ -209,6 +209,15 @@ Next, you have to close the staging repository:
 3. Select the Polaris repository
 4. At the top, select "Close" and follow the instructions
 5. In the comment field, use "Apache Polaris x.y.z RCi"
+
+### Build and staging Docker images
+
+You can now publish Docker images on DockerHub:
+
+```
+./gradlew :polaris-server:assemble :polaris-server:quarkusAppPartsBuild --rerun -Dquarkus.container-image.build=true -Dquarkus.container-image.push=true -Dquarkus.docker.buildx.platform="linux/amd64,linux/arm64" -Dquarkus.container-image.tag=x.y.z-rci
+./gradlew :polaris-admin:assemble :polaris-admin:quarkusAppPartsBuild --rerun -Dquarkus.container-image.build=true -Dquarkus.container-image.push=true -Dquarkus.docker.buildx.platform="linux/amd64,linux/arm64" -Dquarkus.container-image.tag=x.y.z-rci
+```
 
 ### Start the vote thread
 
@@ -235,12 +244,14 @@ Apache Polaris x.y.z release.
 * https://github.com/apache/polaris/tree/<SHA1>
 
 The release tarball, signature, and checksums are here:
-* https://dist.apache.org/repos/dist/dev/incubator/polaris/apache-polaris-x.y.z
+* https://dist.apache.org/repos/dist/dev/incubator/polaris/x.y.z
 
 Helm charts are available on:
 * https://dist.apache.org/repos/dist/dev/incubator/polaris/helm-chart
-NB: the docker images (polaris-server and polaris-admin) will be
-published on DockerHub once release vote passes.
+
+Docker images:
+* https://hub.docker.com/r/apache/polaris/tags (x.y.z-rci)
+* https://hub.docker.com/r/apache/polaris-admin-tool/tags (x.y.z-rci)
 
 You can find the KEYS file here:
 * https://downloads.apache.org/incubator/polaris/KEYS
@@ -308,7 +319,7 @@ Vote result thread:
 * https://lists.apache.org/thread/<VOTE RESULT>
 
 The release candidate:
-* https://dist.apache.org/repos/dist/dev/incubator/polaris/apache-polaris-x.y.z
+* https://dist.apache.org/repos/dist/dev/incubator/polaris/x.y.z
 
 Git tag for the release:
 * https://github.com/apache/polaris/releases/tag/apache-polaris-x.y.z-rci
@@ -362,7 +373,7 @@ After the release votes passed, you need to release the last candidate's artifac
 First, copy the distribution from the dist dev space to the dist release space:
 
 ```
-svn mv https://dist.apache.org/repos/dist/dev/incubator/polaris/apache-polaris-x.y.z https://dist.apache.org/repos/dist/release/incubator/polaris
+svn mv https://dist.apache.org/repos/dist/dev/incubator/polaris/x.y.z https://dist.apache.org/repos/dist/release/incubator/polaris
 svn mv https://dist.apache.org/repos/dist/dev/incubator/polaris/helm-chart/x.y.z https://dist.apache.org/repos/dist/release/incubator/polaris/helm-chart
 ```
 
@@ -371,19 +382,19 @@ Next, add a release tag to the git repository based on the candidate tag:
 ```
 git tag -a apache-polaris-x.y.z apache-polaris-x.y.z-rci
 ```
+Update GitHub with the release: https://github.com/apache/polaris/releases/tag/apache-polaris-x.y.z
 
 Then release the candidate repository on [Nexus](https://repository.apache.org/#stagingRepositories).
 
-### Announcing the release
+### Publishing docs 
+1. Open a PR against branch [`versioned-docs`](https://github.com/apache/polaris/tree/versioned-docs) to publish the documentation
+2. Open a PR against the `main` branch to update website
+    - Add download links and release notes in [Download page](https://github.com/apache/polaris/blob/main/site/content/downloads/_index.md)
+    - Add the release in the [website menu](https://github.com/apache/polaris/blob/main/site/hugo.yaml)
 
+### Announcing the release
 To announce the release, wait until Maven Central has mirrored the artifacts.
 
-Create a PR to update website:
-* [Download page](https://github.com/apache/polaris/blob/main/site/content/downloads.md)
-* Copy release documentation from the release source distribution (`cp -r site/content/in-dev/unreleased site/content/in-dev/x.y.z`)
-* Add the release in the [website menu](https://github.com/apache/polaris/blob/main/site/hugo.yaml)
-
-Update GitHub with the release: https://github.com/apache/polaris/releases/tag/apache-polaris-x.y.z
 
 Send a mail to dev@iceberg.apache.org and announce@apache.org:
 
